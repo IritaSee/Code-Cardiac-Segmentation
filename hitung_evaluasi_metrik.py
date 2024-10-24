@@ -21,12 +21,13 @@ from hitung_surface_distance_2d import surfd
 from hitung_mcc_2d import mcc_2d
 
 import csv
+    
 
-i = 102
+i = 104
 
-direktori_predict_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/categoricalcrossentropy/Prediksi Pasien/Pasien {i}/prediksi myocardium/"
-direktori_predict_ed_rv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/categoricalcrossentropy/Prediksi Pasien/Pasien {i}/prediksi right ventricle/"
-direktori_predict_ed_lv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/categoricalcrossentropy/Prediksi Pasien/Pasien {i}/prediksi left ventricle/"
+direktori_predict_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/diceloss/Prediksi Pasien/Pasien {i}/prediksi myocardium/"
+direktori_predict_ed_rv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/diceloss/Prediksi Pasien/Pasien {i}/prediksi right ventricle/"
+direktori_predict_ed_lv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/diceloss/Prediksi Pasien/Pasien {i}/prediksi left ventricle/"
 
 
 direktori_gt_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Data Test Resize 128 ED/Pasien {i}/groundtruth myocardium/"
@@ -35,7 +36,7 @@ direktori_gt_ed_lv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/
 
 
 
-simpan_csv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/categoricalcrossentropy/Prediksi Pasien/Pasien {i}/"
+simpan_csv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/unet/diceloss/Prediksi Pasien/Pasien {i}/"
 
 
 

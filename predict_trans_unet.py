@@ -30,7 +30,7 @@ from tensorflow.keras.activations import softmax
 
 
 direktori_citra = "D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Data Test Resize 128 ED/"
-direktori_prediksi_ed = "D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Training/transunet/batch8/"
+direktori_prediksi_ed = "D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/focalctc/"
 
 def get_image_modification_time(item):
     item_path = os.path.join(direktori_citra, item)
@@ -750,7 +750,8 @@ class Snake(Layer):
 
 def membuat_direktori_2d_ed_prediksi(id_pasien, path_direktori):
     
-    direktori_pasien = os.path.join(path_direktori, f"Pasien {id_pasien}")
+    direktori_citra_1 = os.path.join(path_direktori, "Prediksi Pasien")
+    direktori_pasien = os.path.join(direktori_citra_1, f"Pasien {id_pasien}")
     direktori_prediksi = os.path.join(direktori_pasien, "citra prediksi")
     direktori_rv = os.path.join(direktori_pasien, "prediksi right ventricel")
     direktori_myo = os.path.join(direktori_pasien, "prediksi myocardium")
@@ -758,13 +759,14 @@ def membuat_direktori_2d_ed_prediksi(id_pasien, path_direktori):
     
     
     #membuat direktori jika belum ada 
+    os.makedirs(direktori_citra_1, exist_ok=True)
     os.makedirs(direktori_pasien, exist_ok=True)
     os.makedirs(direktori_prediksi, exist_ok=True)
     os.makedirs(direktori_rv, exist_ok=True)
     os.makedirs(direktori_myo, exist_ok=True)
     os.makedirs(direktori_lv, exist_ok=True)
     
-    return direktori_pasien, direktori_prediksi,  direktori_rv, direktori_myo, direktori_lv
+    return direktori_citra_1, direktori_pasien, direktori_prediksi,  direktori_rv, direktori_myo, direktori_lv
 
 
 def prediksi_citra(imgs, model):
@@ -779,7 +781,7 @@ def prediksi_citra(imgs, model):
             print(f"Tidak dapat mengekstrak nomor pasien dari {img_path}")
             continue
         
-        direktori_pasien, direktori_prediksi, direktori_rv, direktori_myo, direktori_lv = membuat_direktori_2d_ed_prediksi(nomor_pasien, direktori_prediksi_ed)
+        direktori_citra_1, direktori_pasien, direktori_prediksi, direktori_rv, direktori_myo, direktori_lv = membuat_direktori_2d_ed_prediksi(nomor_pasien, direktori_prediksi_ed)
         
         img = cv.imread(img_path, 0)
         img_array = np.array(img)
@@ -874,7 +876,7 @@ def main():
     }
     
     # Gunakan custom_objects saat memuat model
-    model_path = 'D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Model/model_transunet_cardiac_ed_batch8_categoricalcrossentropy_lr1e-3.hdf5'
+    model_path = 'D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/model/model transunet epoch 50/model_transunet_cardiac_ed_focalctc_lr1e-3_1.hdf5'
     model = load_model(model_path, custom_objects=custom_objects, compile=False)
     
     
