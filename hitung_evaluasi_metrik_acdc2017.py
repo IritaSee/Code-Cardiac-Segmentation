@@ -25,9 +25,9 @@ import csv
     
 for i in range(101, 151):
     
-    direktori_predict_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/focalctc/Prediksi Pasien/Pasien {i}/prediksi myocardium/"
-    direktori_predict_ed_rv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/focalctc/Prediksi Pasien/Pasien {i}/prediksi right ventricel/"
-    direktori_predict_ed_lv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/focalctc/Prediksi Pasien/Pasien {i}/prediksi left ventricel/"
+    direktori_predict_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/msefocalctc/Prediksi Pasien/Pasien {i}/prediksi myocardium/"
+    direktori_predict_ed_rv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/msefocalctc/Prediksi Pasien/Pasien {i}/prediksi right ventricel/"
+    direktori_predict_ed_lv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/msefocalctc/Prediksi Pasien/Pasien {i}/prediksi left ventricel/"
 
 
     direktori_gt_ed_myo = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Data Test Resize 128 ED/Pasien {i}/groundtruth myocardium/"
@@ -36,7 +36,7 @@ for i in range(101, 151):
 
 
 
-    simpan_csv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/focalctc/Prediksi Pasien/Pasien {i}/"
+    simpan_csv = f"D:/Intelligent Multimedia Network/Research/Riset Bu Dini/Dataset/acdc17/acdc17/Data 2D/ED/Hasil Predict 2D versi 3/Hasil Predict Versi 2/transunet/msefocalctc/Prediksi Pasien/Pasien {i}/"
 
     
     def hitung_evaluasi_metrik_myo(imgs, masks):
@@ -261,7 +261,7 @@ for i in range(101, 151):
         
             return iou_list_rv, dice_list_rv, hausdorff_list_rv, surface_distance_list_rv
         
-            print("Perhitungan Nilai Metrik Right Ventricle Sudah Selesai...\n")
+            print("Perhitungan Nilai Metrik Right Ventricle Sudah Selesai.../n")
         
     def hitung_evaluasi_metrik_lv(imgs, masks):
     
