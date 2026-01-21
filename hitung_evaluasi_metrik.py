@@ -147,10 +147,12 @@ def hitung_evaluasi_metrik_myo(imgs, masks):
          
         writer.writerow(["Mean IoU", "Mean Dice","Mean Hausdorff Distance", "Mean Surface Distance"])
         writer.writerow([avg_iou_myo_ed_str, avg_dice_myo_ed_str, avg_hd_myo_ed_str, avg_surface_myo_ed_str])
+
+        print("Perhitungan Nilai Metrik Myocardium Sudah Selesai...\n")
         
         return iou_list_myo, dice_list_myo, hausdorff_list_myo, surface_distance_list_myo
         
-        print("Perhitungan Nilai Metrik Myocardium Sudah Selesai...\n")
+        
         
 def hitung_evaluasi_metrik_rv(imgs, masks):
     
@@ -259,10 +261,11 @@ def hitung_evaluasi_metrik_rv(imgs, masks):
          
         writer.writerow(["Mean IoU", "Mean Dice","Mean Hausdorff Distance", "Mean Surface Distance"])
         writer.writerow([avg_iou_rv_ed_str, avg_dice_rv_ed_str, avg_hd_rv_ed_str, avg_surface_rv_ed_str])
+
+        print("Perhitungan Nilai Metrik Right Ventricle Sudah Selesai...\n")
         
         return iou_list_rv, dice_list_rv, hausdorff_list_rv, surface_distance_list_rv
         
-        print("Perhitungan Nilai Metrik Right Ventricle Sudah Selesai...\n")
         
         
 def hitung_evaluasi_metrik_lv(imgs, masks):
