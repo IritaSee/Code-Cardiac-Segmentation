@@ -5,22 +5,13 @@ scikit-learn
 scikit-image
 h5py
 numba
+pandas
+seaborn
 
 # Deep learning
 # Note: The code mixes `keras` and `tensorflow.keras` imports.
 # Use a TensorFlow 2.x + Keras <3 pairing to avoid incompatibilities.
-# Deep learning
-# Note: The code mixes `keras` and `tensorflow.keras` imports.
-# Use a TensorFlow 2.x + Keras <3 pairing to avoid incompatibilities.
-
-# For Intel/Linux/Windows, use:
-# tensorflow
-# keras<3
-
-# For Apple Silicon (M1/M2/M3), use:
-tensorflow-macos
-tensorflow-metal
-keras<3
+tensorflow>=2.15.0 
 
 # Imaging & I/O
 opencv-python
@@ -34,5 +25,8 @@ pynrrd
 split-folders
 
 # Optional (used by predict_resnet_2d.py)
-# qubvel/segmentation-models depends on specific TF/Keras versions; adjust if needed.
-segmentation-models==1.0.1
+# Pinned to compatible version for Python 3.10+
+segmentation-models>=1.0.1
+
+# For jupyter notebooks
+jupyterlab

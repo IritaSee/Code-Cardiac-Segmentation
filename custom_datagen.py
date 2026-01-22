@@ -19,20 +19,35 @@ import numpy as np
 
 def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
     """
-    Load .npy images from directory.
+    Load images from directory (supports .npy and .png formats).
     
     Args:
-        img_dir: Directory path containing .npy files
+        img_dir: Directory path containing image files
         img_list: List of image filenames to load
         
     Returns:
         Stacked numpy array of shape (N, *image_shape)
     """
     images = []
-    for i, image_name in enumerate(img_list):    
-        if image_name.split('.')[-1] == 'npy':
-            image = np.load(os.path.join(img_dir, image_name))
-            images.append(image)
+    for i, image_name in enumerate(img_list):
+        ext = image_name.split('.')[-1].lower()
+        file_path = os.path.join(img_dir, image_name)
+        
+        if ext == 'npy':
+            image = np.load(file_path)
+        elif ext in ['png', 'jpg', 'jpeg']:
+            # For PNG/JPG, import cv2 for reading
+            import cv2
+            image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+            if image is None:
+                print(f"Warning: Could not load {file_path}")
+                continue
+            # Normalize to [0, 1] range
+            image = image.astype('float32') / 255.0
+        else:
+            continue
+        
+        images.append(image)
     
     return np.array(images)
 
@@ -127,7 +142,7 @@ class FoldAwareDataLoader:
         """
         Get list of image filenames for given patients.
         
-        Assumes folder structure: base_dir/Pasien <id>/<image_subdir>/*.npy
+        Assumes folder structure: base_dir/Pasien <id>/<image_subdir>/*.(npy|png|jpg)
         
         Args:
             patient_ids: List of patient IDs
@@ -137,6 +152,7 @@ class FoldAwareDataLoader:
             Tuple of (file_list, directory_path) for use with load_img()
         """
         file_list = []
+        patient_dirs = {}  # Map patient_id -> directory path
         
         for pid in patient_ids:
             patient_dir = self.base_dir / f"Pasien {pid}" / image_subdir
@@ -145,20 +161,24 @@ class FoldAwareDataLoader:
                 print(f"[FoldAwareDataLoader] Warning: {patient_dir} not found, skipping patient {pid}")
                 continue
             
-            # Get all .npy files in this patient's image directory
-            npy_files = sorted([f.name for f in patient_dir.glob("*.npy")])
-            file_list.extend(npy_files)
+            patient_dirs[pid] = patient_dir
+            
+            # Get all supported image files in this patient's directory
+            for ext in ['*.npy', '*.png', '*.jpg', '*.jpeg']:
+                files = sorted([f.name for f in patient_dir.glob(ext)])
+                file_list.extend(files)
         
-        # Return first patient's directory (assumes all are same structure)
-        if patient_ids:
-            first_patient_dir = self.base_dir / f"Pasien {patient_ids[0]}" / image_subdir
+        # Return first valid patient's directory (assumes all are same structure)
+        if patient_dirs:
+            first_pid = list(patient_dirs.keys())[0]
+            first_patient_dir = patient_dirs[first_pid]
             return file_list, str(first_patient_dir)
         else:
             raise ValueError("No valid patient IDs provided")
     
     def get_generators(self, fold_id: int, batch_size: int = 8,
                       image_subdir: str = 'images',
-                      mask_subdir: str = 'masks') -> Tuple[Generator, Generator, int, int]:
+                      mask_subdir: str = 'groundtruth') -> Tuple[Generator, Generator, int, int]:
         """
         Get train and validation generators for a specific fold.
         
