@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import numpy as np
 from datetime import datetime
+import sys
 
 try:
     import tensorflow as tf
@@ -33,6 +34,7 @@ except ImportError:
     tf = None
 
 from custom_datagen import FoldAwareDataLoader
+from proposed_model import build_unet_mifocat, mifocat_loss, mean_iou, dice_score
 
 
 class KFoldTrainer:
@@ -76,6 +78,15 @@ class KFoldTrainer:
         print(f"[KFoldTrainer] Output directory: {self.output_dir}")
         
         # Initialize data loader
+        print(f"[KFoldTrainer] Initializing data loader...")
+        print(f"[KFoldTrainer] Base data directory: {base_data_dir}")
+        print(f"[KFoldTrainer] Base data directory exists: {Path(base_data_dir).exists()}")
+        
+        if not Path(base_data_dir).exists():
+            print(f"[KFoldTrainer] ✗ ERROR: Data directory does not exist!")
+            print(f"[KFoldTrainer] Please check the path, especially for spaces in directory names.")
+            raise FileNotFoundError(f"Data directory not found: {base_data_dir}")
+        
         self.data_loader = FoldAwareDataLoader(str(base_data_dir), str(fold_metadata_path))
         
         # Metrics storage
@@ -99,10 +110,19 @@ class KFoldTrainer:
             raise ImportError("TensorFlow required for model training")
         
         if model_type == 'unet':
-            print("[KFoldTrainer] Loading U-Net model...")
-            # TODO: Import and instantiate U-Net from predict_unet_2d.py
-            raise NotImplementedError("Model loading not yet implemented. "
-                                     "Please add model instantiation here.")
+            print("[KFoldTrainer] Loading U-Net model with MIFOCAT loss...")
+            # Build U-Net architecture
+            model = build_unet_mifocat(input_shape=(256, 256, 1), num_classes=4)
+            
+            # Compile with MIFOCAT loss (MSE + Focal + Categorical Cross-Entropy)
+            model.compile(
+                optimizer=Adam(learning_rate=1e-3),
+                loss=mifocat_loss(alpha=0.25, gamma=2.0, r1=1.0, r2=1.0, r3=1.0),
+                metrics=['accuracy', mean_iou, dice_score]
+            )
+            
+            print("[KFoldTrainer] Model compiled with MIFOCAT loss")
+            return model
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
     
@@ -131,11 +151,28 @@ class KFoldTrainer:
         
         # Get generators
         try:
+            print(f"[FOLD {fold_id}] Loading data generators...")
             train_gen, val_gen, train_steps, val_steps = self.data_loader.get_generators(
                 fold_id, batch_size=batch_size
             )
+            if train_steps == 0 or val_steps == 0:
+                print(f"[FOLD {fold_id}] ✗ WARNING: No training or validation steps found")
+                print(f"[FOLD {fold_id}]   Training steps: {train_steps}, Validation steps: {val_steps}")
+                print(f"[FOLD {fold_id}] This usually means the data directory is empty or structured incorrectly")
+                return None
+        except ValueError as ve:
+            print(f"[FOLD {fold_id}] ✗ CRITICAL: {ve}")
+            print(f"[FOLD {fold_id}] This usually means patient directories are not found in the data directory")
+            print(f"[FOLD {fold_id}] Expected structure: <DATA_ROOT>/Pasien <patient_id>/images/")
+            return None
+        except FileNotFoundError as fe:
+            print(f"[FOLD {fold_id}] ✗ Data directory error: {fe}")
+            print(f"[FOLD {fold_id}] Check if the data path contains spaces and is correctly specified")
+            return None
         except Exception as e:
-            print(f"[FOLD {fold_id}] Error loading generators: {e}")
+            print(f"[FOLD {fold_id}] ✗ Error loading generators: {e}")
+            import traceback
+            traceback.print_exc()
             return None
         
         # Set up callbacks

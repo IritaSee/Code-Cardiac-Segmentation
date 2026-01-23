@@ -19,11 +19,11 @@ import numpy as np
 
 def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
     """
-    Load images from directory (supports .npy and .png formats).
+    Load images from directory or full paths (supports .npy and .png formats).
     
     Args:
-        img_dir: Directory path containing image files
-        img_list: List of image filenames to load
+        img_dir: Base directory path (can be None/empty if img_list contains full paths)
+        img_list: List of image filenames or full paths
         
     Returns:
         Stacked numpy array of shape (N, *image_shape)
@@ -31,8 +31,13 @@ def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
     images = []
     for i, image_name in enumerate(img_list):
         ext = image_name.split('.')[-1].lower()
-        file_path = os.path.join(img_dir, image_name)
         
+        # Check if image_name is already a full path
+        if os.path.isabs(image_name):
+            file_path = image_name
+        else:
+            file_path = os.path.join(img_dir, image_name)
+
         if ext == 'npy':
             image = np.load(file_path)
         elif ext in ['png', 'jpg', 'jpeg']:
@@ -40,7 +45,7 @@ def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
             import cv2
             image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
             if image is None:
-                print(f"Warning: Could not load {file_path}")
+                print(f"✗ Warning: Could not load {file_path}")
                 continue
             # Normalize to [0, 1] range
             image = image.astype('float32') / 255.0
@@ -151,6 +156,18 @@ class FoldAwareDataLoader:
         Returns:
             Tuple of (file_list, directory_path) for use with load_img()
         """
+        print(f"[FoldAwareDataLoader.get_file_list] Starting file list collection")
+        print(f"[FoldAwareDataLoader.get_file_list] Base directory: {self.base_dir}")
+        print(f"[FoldAwareDataLoader.get_file_list] Base directory exists: {self.base_dir.exists()}")
+        print(f"[FoldAwareDataLoader.get_file_list] Number of patient IDs to process: {len(patient_ids)}")
+        print(f"[FoldAwareDataLoader.get_file_list] First few patient IDs: {patient_ids[:3]}")
+        
+        # List what's actually in base_dir
+        if self.base_dir.exists():
+            print(f"[FoldAwareDataLoader.get_file_list] Contents of base directory:")
+            for item in sorted(self.base_dir.iterdir())[:10]:
+                print(f"  - {item.name} {'(dir)' if item.is_dir() else ''}")
+        
         file_list = []
         patient_dirs = {}  # Map patient_id -> directory path
         
@@ -158,23 +175,30 @@ class FoldAwareDataLoader:
             patient_dir = self.base_dir / f"Pasien {pid}" / image_subdir
             
             if not patient_dir.exists():
-                print(f"[FoldAwareDataLoader] Warning: {patient_dir} not found, skipping patient {pid}")
+                # Check what does exist for this patient
+                patient_base = self.base_dir / f"Pasien {pid}"
+                if patient_base.exists():
+                    print(f"[FoldAwareDataLoader] Patient dir exists: {patient_base}, but missing subdir '{image_subdir}'")
+                    print(f"[FoldAwareDataLoader] Contents: {list(patient_base.iterdir())}")
+                else:
+                    print(f"[FoldAwareDataLoader] ✗ Patient directory not found: {patient_dir}")
+                    print(f"[FoldAwareDataLoader]   Expected pattern: {self.base_dir}/Pasien {pid}/{image_subdir}")
                 continue
             
             patient_dirs[pid] = patient_dir
             
             # Get all supported image files in this patient's directory
+            # Store FULL PATHS, not just filenames
             for ext in ['*.npy', '*.png', '*.jpg', '*.jpeg']:
-                files = sorted([f.name for f in patient_dir.glob(ext)])
+                files = sorted([str(f) for f in patient_dir.glob(ext)])  # Full path
                 file_list.extend(files)
         
-        # Return first valid patient's directory (assumes all are same structure)
+        # Return the base directory (will be used to extract relative paths if needed)
         if patient_dirs:
-            first_pid = list(patient_dirs.keys())[0]
-            first_patient_dir = patient_dirs[first_pid]
-            return file_list, str(first_patient_dir)
+            print(f"[FoldAwareDataLoader.get_file_list] ✓ Found {len(patient_dirs)} valid patients, {len(file_list)} total files")
+            return file_list, str(self.base_dir)
         else:
-            raise ValueError("No valid patient IDs provided")
+            raise ValueError(f"✗ CRITICAL: No valid patient IDs found! Checked {len(patient_ids)} patient IDs in {self.base_dir}")
     
     def get_generators(self, fold_id: int, batch_size: int = 8,
                       image_subdir: str = 'images',
@@ -191,37 +215,43 @@ class FoldAwareDataLoader:
         Returns:
             Tuple of (train_generator, val_generator, train_steps, val_steps)
         """
+        print(f"\n[FoldAwareDataLoader.get_generators] ===== STARTING FOLD {fold_id} =====")
+        print(f"[FoldAwareDataLoader.get_generators] Image subdir: {image_subdir}, Mask subdir: {mask_subdir}")
+        print(f"[FoldAwareDataLoader.get_generators] Base directory: {self.base_dir}")
+        
         # Get patient lists
         train_patients = self.get_fold_patients(fold_id, 'train')
         val_patients = self.get_fold_patients(fold_id, 'val')
         
         print(f"[FoldAwareDataLoader] Fold {fold_id}: "
               f"{len(train_patients)} train patients, {len(val_patients)} val patients")
+        print(f"[FoldAwareDataLoader] Train patients: {train_patients[:5]}{'...' if len(train_patients) > 5 else ''}")
+        print(f"[FoldAwareDataLoader] Val patients: {val_patients[:5]}{'...' if len(val_patients) > 5 else ''}")
         
-        # Get file lists
-        train_files, train_img_dir = self.get_file_list(train_patients, image_subdir)
-        val_files, val_img_dir = self.get_file_list(val_patients, image_subdir)
+        # Get file lists (now returns FULL PATHS)
+        train_img_files, _ = self.get_file_list(train_patients, image_subdir)
+        val_img_files, _ = self.get_file_list(val_patients, image_subdir)
         
-        # Construct mask paths (assumes Pasien <id>/masks/ structure)
-        # This is a simplified assumption; adjust based on your actual structure
-        train_mask_dir = str(Path(train_img_dir).parent / mask_subdir)
-        val_mask_dir = str(Path(val_img_dir).parent / mask_subdir)
+        # Get mask files (also full paths)
+        train_mask_files, _ = self.get_file_list(train_patients, mask_subdir)
+        val_mask_files, _ = self.get_file_list(val_patients, mask_subdir)
         
-        print(f"[FoldAwareDataLoader] Train files: {len(train_files)}, Val files: {len(val_files)}")
+        print(f"[FoldAwareDataLoader] Train: {len(train_img_files)} images, {len(train_mask_files)} masks")
+        print(f"[FoldAwareDataLoader] Val: {len(val_img_files)} images, {len(val_mask_files)} masks")
         
-        # Create generators
+        # Create generators (pass empty string for directories since files are full paths)
         train_gen = imageLoader(
-            train_img_dir, train_files,
-            train_mask_dir, train_files,  # Assume same filenames for masks
+            "", train_img_files,
+            "", train_mask_files,
             batch_size
         )
         val_gen = imageLoader(
-            val_img_dir, val_files,
-            val_mask_dir, val_files,
+            "", val_img_files,
+            "", val_mask_files,
             batch_size
         )
         
-        train_steps = max(1, len(train_files) // batch_size)
-        val_steps = max(1, len(val_files) // batch_size)
+        train_steps = max(1, len(train_img_files) // batch_size)
+        val_steps = max(1, len(val_img_files) // batch_size)
         
         return train_gen, val_gen, train_steps, val_steps
