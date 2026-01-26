@@ -16,18 +16,30 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Generator
 import numpy as np
 
+import cv2
 
-def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
+from math import ceil
+
+
+def load_img(img_dir: str, img_list: List[str], target_size: Tuple[int, int] = (256, 256),
+             is_mask: bool = False, num_classes: int = 4) -> np.ndarray:
     """
     Load images from directory or full paths (supports .npy and .png formats).
+    All images are resized to target_size for consistent batch shapes.
     
     Args:
         img_dir: Base directory path (can be None/empty if img_list contains full paths)
         img_list: List of image filenames or full paths
+        target_size: Tuple of (height, width) to resize all images to. Default (256, 256)
+        is_mask: If True, converts to one-hot encoding for segmentation masks
+        num_classes: Number of classes for one-hot encoding (only used if is_mask=True)
         
     Returns:
-        Stacked numpy array of shape (N, *image_shape)
+        Stacked numpy array of shape:
+        - Images: (N, height, width, 1)
+        - Masks: (N, height, width, num_classes) if is_mask=True
     """
+    
     images = []
     for i, image_name in enumerate(img_list):
         ext = image_name.split('.')[-1].lower()
@@ -38,28 +50,57 @@ def load_img(img_dir: str, img_list: List[str]) -> np.ndarray:
         else:
             file_path = os.path.join(img_dir, image_name)
 
-        if ext == 'npy':
-            image = np.load(file_path)
-        elif ext in ['png', 'jpg', 'jpeg']:
-            # For PNG/JPG, import cv2 for reading
-            import cv2
-            image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
-            if image is None:
-                print(f"✗ Warning: Could not load {file_path}")
+        try:
+            if ext == 'npy':
+                image = np.load(file_path)
+                # Resize if necessary
+                if image.shape[:2] != target_size:
+                    image = cv2.resize(image, (target_size[1], target_size[0]), 
+                                     interpolation=cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR)
+            elif ext in ['png', 'jpg', 'jpeg']:
+                # For PNG/JPG, use cv2 for reading
+                image = cv2.imread(file_path, cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    print(f"✗ Warning: Could not load {file_path}")
+                    continue
+                # Resize to target size
+                image = cv2.resize(image, (target_size[1], target_size[0]), 
+                                 interpolation=cv2.INTER_NEAREST if is_mask else cv2.INTER_LINEAR)
+                # Normalize to [0, 1] range for images, keep integer for masks
+                if not is_mask:
+                    image = image.astype('float32') / 255.0
+            else:
                 continue
-            # Normalize to [0, 1] range
-            image = image.astype('float32') / 255.0
-        else:
+            
+            images.append(image)
+        except Exception as e:
+            print(f"✗ Error loading {file_path}: {e}")
             continue
-        
-        images.append(image)
     
-    return np.array(images)
+    if not images:
+        raise ValueError(f"No images were loaded from {img_list}")
+    
+    # Stack images
+    stacked = np.array(images)
+    
+    if is_mask:
+        # Convert masks to one-hot encoding
+        # Assuming mask values are 0, 1, 2, 3 for 4 classes
+        # Shape: (N, H, W) -> (N, H, W, num_classes)
+        one_hot = np.zeros((stacked.shape[0], stacked.shape[1], stacked.shape[2], num_classes), dtype='float32')
+        for c in range(num_classes):
+            one_hot[..., c] = (stacked == c).astype('float32')
+        return one_hot
+    else:
+        # Add channel dimension for grayscale images
+        # Shape: (N, H, W) -> (N, H, W, 1)
+        return np.expand_dims(stacked, axis=-1)
 
 
 def imageLoader(img_dir: str, img_list: List[str], 
                 mask_dir: str, mask_list: List[str], 
-                batch_size: int) -> Generator:
+                batch_size: int, target_size: Tuple[int, int] = (256, 256),
+                num_classes: int = 4) -> Generator:
     """
     Legacy infinite batch generator for Keras training.
     
@@ -69,9 +110,13 @@ def imageLoader(img_dir: str, img_list: List[str],
         mask_dir: Directory containing mask .npy files
         mask_list: List of mask filenames
         batch_size: Batch size for yielding
+        target_size: Tuple of (height, width) to resize images to
+        num_classes: Number of segmentation classes for one-hot encoding
         
     Yields:
         Tuple (X, Y) of batch-sized numpy arrays
+        X: (batch, height, width, 1)
+        Y: (batch, height, width, num_classes)
     """
     L = len(img_list)
     
@@ -83,8 +128,8 @@ def imageLoader(img_dir: str, img_list: List[str],
         while batch_start < L:
             limit = min(batch_end, L)
             
-            X = load_img(img_dir, img_list[batch_start:limit])
-            Y = load_img(mask_dir, mask_list[batch_start:limit])
+            X = load_img(img_dir, img_list[batch_start:limit], target_size=target_size, is_mask=False)
+            Y = load_img(mask_dir, mask_list[batch_start:limit], target_size=target_size, is_mask=True, num_classes=num_classes)
 
             yield (X, Y)
             
@@ -202,7 +247,8 @@ class FoldAwareDataLoader:
     
     def get_generators(self, fold_id: int, batch_size: int = 8,
                       image_subdir: str = 'images',
-                      mask_subdir: str = 'groundtruth') -> Tuple[Generator, Generator, int, int]:
+                      mask_subdir: str = 'groundtruth',
+                      target_size: Tuple[int, int] = (256, 256)) -> Tuple[Generator, Generator, int, int]:
         """
         Get train and validation generators for a specific fold.
         
@@ -211,12 +257,14 @@ class FoldAwareDataLoader:
             batch_size: Batch size for generators
             image_subdir: Subdirectory containing images
             mask_subdir: Subdirectory containing masks
+            target_size: Tuple of (height, width) to resize all images to
             
         Returns:
             Tuple of (train_generator, val_generator, train_steps, val_steps)
         """
         print(f"\n[FoldAwareDataLoader.get_generators] ===== STARTING FOLD {fold_id} =====")
         print(f"[FoldAwareDataLoader.get_generators] Image subdir: {image_subdir}, Mask subdir: {mask_subdir}")
+        print(f"[FoldAwareDataLoader.get_generators] Target size: {target_size}")
         print(f"[FoldAwareDataLoader.get_generators] Base directory: {self.base_dir}")
         
         # Get patient lists
@@ -243,15 +291,20 @@ class FoldAwareDataLoader:
         train_gen = imageLoader(
             "", train_img_files,
             "", train_mask_files,
-            batch_size
+            batch_size,
+            target_size=target_size,
+            num_classes=4  # ACDC2017: background, RV, myocardium, LV
         )
         val_gen = imageLoader(
             "", val_img_files,
             "", val_mask_files,
-            batch_size
+            batch_size,
+            target_size=target_size,
+            num_classes=4  # ACDC2017: background, RV, myocardium, LV
         )
         
-        train_steps = max(1, len(train_img_files) // batch_size)
-        val_steps = max(1, len(val_img_files) // batch_size)
+        # Use ceil so we do not silently drop the final partial batch; integer division was collapsing to 1 step
+        train_steps = max(1, ceil(len(train_img_files) / float(batch_size)))
+        val_steps = max(1, ceil(len(val_img_files) / float(batch_size)))
         
         return train_gen, val_gen, train_steps, val_steps
