@@ -1,5 +1,11 @@
+# Deep learning
+# Note: The code mixes `keras` and `tensorflow.keras` imports.
+# Use a TensorFlow 2.x + Keras <3 pairing to avoid incompatibilities.
+# tensorflow==2.15.0
+# tensorflow-metal==1.1.0
+
 # Core ML stack
-numpy
+numpy<2
 matplotlib
 scikit-learn
 scikit-image
@@ -7,11 +13,6 @@ h5py
 numba
 pandas
 seaborn
-
-# Deep learning
-# Note: The code mixes `keras` and `tensorflow.keras` imports.
-# Use a TensorFlow 2.x + Keras <3 pairing to avoid incompatibilities.
-tensorflow>=2.15.0 
 
 # Imaging & I/O
 opencv-python
