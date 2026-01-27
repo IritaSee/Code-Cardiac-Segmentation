@@ -294,7 +294,8 @@ class KFoldTrainer:
             return None
     
     def run_all_folds(self, model_type: str = 'unet', epochs: int = 50, 
-                     batch_size: int = 8, train_only: bool = False) -> Dict:
+                     batch_size: int = 8, train_only: bool = False,
+                     start_fold: int = 0) -> Dict:
         """
         Run k-fold cross-validation: train and evaluate all folds.
         
@@ -303,6 +304,7 @@ class KFoldTrainer:
             epochs: Max epochs per fold
             batch_size: Batch size for training
             train_only: If True, only train (skip evaluation)
+            start_fold: Skip all folds with index < start_fold (useful to resume)
             
         Returns:
             Dictionary with aggregated metrics across all folds
@@ -312,12 +314,17 @@ class KFoldTrainer:
         print(f"# Metadata: {self.fold_metadata_path}")
         print(f"# Data dir: {self.base_data_dir}")
         print(f"# Output dir: {self.output_dir}")
+        print(f"# Starting from fold: {start_fold}")
         print(f"# Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'#'*70}\n")
         
         fold_results_list = []
         
         for fold_id in range(self.n_splits):
+            if fold_id < start_fold:
+                print(f"[FOLD {fold_id}] Skipping (already completed / start_fold={start_fold})")
+                fold_results_list.append({})
+                continue
             fold_result = {}
             
             # Create fresh model for each fold
