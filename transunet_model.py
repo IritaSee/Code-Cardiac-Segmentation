@@ -292,9 +292,12 @@ class WindowAttention(tf.keras.layers.Layer):
 
     def build(self, input_shape):
         num_window_elements = (2*self.window_size[0] - 1) * (2*self.window_size[1] - 1)
-        self.relative_position_bias_table = self.add_weight('{}_attn_pos'.format(self.prefix),
-                                                            shape=(num_window_elements, self.num_heads),
-                                                            initializer=tf.initializers.Zeros(), trainable=True)
+        self.relative_position_bias_table = self.add_weight(
+            name='{}_attn_pos'.format(self.prefix),
+            shape=(num_window_elements, self.num_heads),
+            initializer=tf.initializers.Zeros(), 
+            trainable=True
+        )
         
         coords_h = np.arange(self.window_size[0])
         coords_w = np.arange(self.window_size[1])
@@ -306,10 +309,15 @@ class WindowAttention(tf.keras.layers.Layer):
         relative_coords[:, :, 0] += self.window_size[0] - 1
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
-        relative_position_index = relative_coords.sum(-1)
+        relative_position_index = relative_coords.sum(-1).astype(np.int32)
         
-        self.relative_position_index = tf.Variable(
-            initial_value=tf.convert_to_tensor(relative_position_index), trainable=False, name='{}_attn_pos_ind'.format(self.prefix))
+        self.relative_position_index = self.add_weight(
+            name='{}_attn_pos_ind'.format(self.prefix),
+            shape=relative_position_index.shape,
+            dtype=tf.int32,
+            initializer=tf.constant_initializer(relative_position_index),
+            trainable=False
+        )
         
         self.built = True
 
@@ -326,15 +334,17 @@ class WindowAttention(tf.keras.layers.Layer):
         k = tf.transpose(k, perm=(0, 1, 3, 2))
         attn = (q @ k)
         
+        # Shift window
         num_window_elements = self.window_size[0] * self.window_size[1]
         relative_position_index_flat = tf.reshape(self.relative_position_index, shape=(-1,))
+        relative_position_index_flat = tf.cast(relative_position_index_flat, tf.int32)
         relative_position_bias = tf.gather(self.relative_position_bias_table, relative_position_index_flat)
         relative_position_bias = tf.reshape(relative_position_bias, shape=(num_window_elements, num_window_elements, -1))
         relative_position_bias = tf.transpose(relative_position_bias, perm=(2, 0, 1))
         attn = attn + tf.expand_dims(relative_position_bias, axis=0)
         
         if mask is not None:
-            nW = mask.get_shape()[0]
+            nW = tf.shape(mask)[0]
             mask_float = tf.cast(tf.expand_dims(tf.expand_dims(mask, axis=1), axis=0), tf.float32)
             attn = tf.reshape(attn, shape=(-1, nW, self.num_heads, N, N)) + mask_float
             attn = tf.reshape(attn, shape=(-1, self.num_heads, N, N))
@@ -428,7 +438,13 @@ class SwinTransformerBlock(tf.keras.layers.Layer):
             attn_mask = tf.expand_dims(mask_windows, axis=1) - tf.expand_dims(mask_windows, axis=2)
             attn_mask = tf.where(attn_mask != 0, -100.0, attn_mask)
             attn_mask = tf.where(attn_mask == 0, 0.0, attn_mask)
-            self.attn_mask = tf.Variable(initial_value=attn_mask, trainable=False, name='{}_attn_mask'.format(self.prefix))
+            attn_mask_np = attn_mask.numpy()
+            self.attn_mask = self.add_weight(
+                name='{}_attn_mask'.format(self.prefix),
+                shape=attn_mask_np.shape,
+                initializer=tf.constant_initializer(attn_mask_np),
+                trainable=False
+            )
         else:
             self.attn_mask = None
         
@@ -523,103 +539,172 @@ class Snake(Layer):
 # ==================== Model Building Function ====================
 
 def build_transunet_mifocat(input_shape=(256, 256, 1), num_classes=4, 
-                           patch_size=16, embed_dim=768, num_heads=12, 
-                           mlp_ratio=4, window_size=7, num_layers=12):
+                           patch_size=1, embed_dim=512, num_heads=8, 
+                           mlp_ratio=4, window_size=4, num_transformer_layers=6,
+                           drop_rate=0.1, attn_drop_rate=0.1):
     """
     Build TransUNet model with MIFOCAT loss compatibility.
     
-    This is a simplified TransUNet architecture suitable for cardiac segmentation.
-    The model combines CNN encoder/decoder with Transformer layers.
+    TransUNet architecture following Chen et al. (2021):
+    - CNN Encoder (ResNet-like) for feature extraction
+    - Transformer Encoder at bottleneck for global context
+    - CNN Decoder with skip connections for segmentation
+    
+    Reference:
+        Chen, J., Lu, Y., Yu, Q., et al. (2021). 
+        TransUNet: Transformers Make Strong Encoders for Medical Image Segmentation.
+        arXiv preprint arXiv:2102.04306.
     
     Args:
-        input_shape: Input image shape (height, width, channels)
-        num_classes: Number of segmentation classes (default 4 for ACDC)
-        patch_size: Size of image patches for transformer (default 16)
-        embed_dim: Embedding dimension (default 768)
-        num_heads: Number of attention heads (default 12)
-        mlp_ratio: MLP hidden dimension ratio (default 4)
-        window_size: Window size for Swin Transformer (default 7)
-        num_layers: Number of transformer layers (default 12)
+        input_shape: Input image shape (height, width, channels). Default (256, 256, 1)
+        num_classes: Number of segmentation classes. Default 4 for ACDC dataset
+        patch_size: Size of patches for transformer. Default 1 (use feature map directly)
+        embed_dim: Transformer embedding dimension. Default 512
+        num_heads: Number of attention heads. Default 8
+        mlp_ratio: MLP hidden dimension ratio. Default 4
+        window_size: Window size for Swin Transformer attention. Default 4
+        num_transformer_layers: Number of transformer blocks. Default 6
+        drop_rate: Dropout rate. Default 0.1
+        attn_drop_rate: Attention dropout rate. Default 0.1
         
     Returns:
-        Compiled Keras model
+        Keras Model with TransUNet architecture
     """
     from tensorflow.keras import layers, models
     
-    inputs = layers.Input(input_shape)
+    inputs = layers.Input(input_shape, name='input')
     
-    # ========== Encoder (CNN backbone) ==========
-    # Following U-Net style encoder
-    c1 = layers.Conv2D(64, (3, 3), padding='same')(inputs)
-    c1 = layers.BatchNormalization()(c1)
-    c1 = layers.Activation('relu')(c1)
-    c1 = layers.Conv2D(64, (3, 3), padding='same')(c1)
-    c1 = layers.BatchNormalization()(c1)
-    c1 = layers.Activation('relu')(c1)
-    p1 = layers.MaxPooling2D((2, 2))(c1)
+    # ========== CNN Encoder (ResNet-like backbone) ==========
+    # Stage 1: 256x256 -> 128x128
+    c1 = layers.Conv2D(64, (3, 3), padding='same', name='enc1_conv1')(inputs)
+    c1 = layers.BatchNormalization(name='enc1_bn1')(c1)
+    c1 = layers.Activation('relu', name='enc1_relu1')(c1)
+    c1 = layers.Conv2D(64, (3, 3), padding='same', name='enc1_conv2')(c1)
+    c1 = layers.BatchNormalization(name='enc1_bn2')(c1)
+    c1 = layers.Activation('relu', name='enc1_relu2')(c1)
+    p1 = layers.MaxPooling2D((2, 2), name='enc1_pool')(c1)  # 128x128
     
-    c2 = layers.Conv2D(128, (3, 3), padding='same')(p1)
-    c2 = layers.BatchNormalization()(c2)
-    c2 = layers.Activation('relu')(c2)
-    c2 = layers.Conv2D(128, (3, 3), padding='same')(c2)
-    c2 = layers.BatchNormalization()(c2)
-    c2 = layers.Activation('relu')(c2)
-    p2 = layers.MaxPooling2D((2, 2))(c2)
+    # Stage 2: 128x128 -> 64x64
+    c2 = layers.Conv2D(128, (3, 3), padding='same', name='enc2_conv1')(p1)
+    c2 = layers.BatchNormalization(name='enc2_bn1')(c2)
+    c2 = layers.Activation('relu', name='enc2_relu1')(c2)
+    c2 = layers.Conv2D(128, (3, 3), padding='same', name='enc2_conv2')(c2)
+    c2 = layers.BatchNormalization(name='enc2_bn2')(c2)
+    c2 = layers.Activation('relu', name='enc2_relu2')(c2)
+    p2 = layers.MaxPooling2D((2, 2), name='enc2_pool')(c2)  # 64x64
     
-    c3 = layers.Conv2D(256, (3, 3), padding='same')(p2)
-    c3 = layers.BatchNormalization()(c3)
-    c3 = layers.Activation('relu')(c3)
-    c3 = layers.Conv2D(256, (3, 3), padding='same')(c3)
-    c3 = layers.BatchNormalization()(c3)
-    c3 = layers.Activation('relu')(c3)
-    p3 = layers.MaxPooling2D((2, 2))(c3)
+    # Stage 3: 64x64 -> 32x32
+    c3 = layers.Conv2D(256, (3, 3), padding='same', name='enc3_conv1')(p2)
+    c3 = layers.BatchNormalization(name='enc3_bn1')(c3)
+    c3 = layers.Activation('relu', name='enc3_relu1')(c3)
+    c3 = layers.Conv2D(256, (3, 3), padding='same', name='enc3_conv2')(c3)
+    c3 = layers.BatchNormalization(name='enc3_bn2')(c3)
+    c3 = layers.Activation('relu', name='enc3_relu2')(c3)
+    p3 = layers.MaxPooling2D((2, 2), name='enc3_pool')(c3)  # 32x32
     
-    # ========== Transformer Bridge ==========
-    # Extract patches at the bottleneck level
-    # At this point: (batch, 32, 32, 256) for input (256, 256, 1)
-    bottleneck_h = input_shape[0] // 8
-    bottleneck_w = input_shape[1] // 8
+    # Stage 4 (bottleneck): 32x32 -> 16x16
+    c4 = layers.Conv2D(embed_dim, (3, 3), padding='same', name='enc4_conv1')(p3)
+    c4 = layers.BatchNormalization(name='enc4_bn1')(c4)
+    c4 = layers.Activation('relu', name='enc4_relu1')(c4)
+    c4 = layers.Conv2D(embed_dim, (3, 3), padding='same', name='enc4_conv2')(c4)
+    c4 = layers.BatchNormalization(name='enc4_bn2')(c4)
+    c4 = layers.Activation('relu', name='enc4_relu2')(c4)
+    p4 = layers.MaxPooling2D((2, 2), name='enc4_pool')(c4)  # 16x16
+    
+    # ========== Transformer Encoder (at bottleneck) ==========
+    # Shape at bottleneck: (batch, 16, 16, 512) for input (256, 256, 1)
+    bottleneck_h = input_shape[0] // 16
+    bottleneck_w = input_shape[1] // 16
+    
+    # Extract patches from feature map
+    # patch_size=1 means we treat each spatial location as a patch
+    patches = patch_extract(patch_size=(patch_size, patch_size), name='patch_extract')(p4)
+    # Shape: (batch, num_patches, patch_dim) where num_patches = (16/patch_size)^2
+    
     num_patches = (bottleneck_h // patch_size) * (bottleneck_w // patch_size)
     
-    # Simple transformer integration (can be enhanced with full TransUNet architecture)
-    # For now, we'll use a basic approach
-    t1 = layers.Conv2D(512, (3, 3), padding='same')(p3)
-    t1 = layers.BatchNormalization()(t1)
-    t1 = layers.Activation('relu')(t1)
-    t1 = layers.Conv2D(512, (3, 3), padding='same')(t1)
-    t1 = layers.BatchNormalization()(t1)
-    t1 = layers.Activation('relu')(t1)
+    # Patch embedding with positional encoding
+    patch_emb = patch_embedding(num_patches, embed_dim, name='patch_embedding')(patches)
+    # Shape: (batch, num_patches, embed_dim)
     
-    # ========== Decoder (with skip connections) ==========
-    u6 = layers.Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same')(t1)
-    u6 = layers.concatenate([u6, c3])
-    c6 = layers.Conv2D(256, (3, 3), padding='same')(u6)
-    c6 = layers.BatchNormalization()(c6)
-    c6 = layers.Activation('relu')(c6)
-    c6 = layers.Conv2D(256, (3, 3), padding='same')(c6)
-    c6 = layers.BatchNormalization()(c6)
-    c6 = layers.Activation('relu')(c6)
+    # Stack of Swin Transformer Blocks
+    x_trans = patch_emb
+    for i in range(num_transformer_layers):
+        # Alternate between non-shifted and shifted windows
+        shift_size = 0 if (i % 2 == 0) else window_size // 2
+        x_trans = SwinTransformerBlock(
+            dim=embed_dim,
+            num_patch=(bottleneck_h // patch_size, bottleneck_w // patch_size),
+            num_heads=num_heads,
+            window_size=window_size,
+            shift_size=shift_size,
+            num_mlp=int(embed_dim * mlp_ratio),
+            qkv_bias=True,
+            qk_scale=None,
+            mlp_drop=drop_rate,
+            attn_drop=attn_drop_rate,
+            proj_drop=drop_rate,
+            drop_path_prob=drop_rate * (i / num_transformer_layers),
+            name=f'swin_block_{i}'
+        )(x_trans)
     
-    u7 = layers.Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same')(c6)
-    u7 = layers.concatenate([u7, c2])
-    c7 = layers.Conv2D(128, (3, 3), padding='same')(u7)
-    c7 = layers.BatchNormalization()(c7)
-    c7 = layers.Activation('relu')(c7)
-    c7 = layers.Conv2D(128, (3, 3), padding='same')(c7)
-    c7 = layers.BatchNormalization()(c7)
-    c7 = layers.Activation('relu')(c7)
+    # Reshape back to spatial dimensions
+    # (batch, num_patches, embed_dim) -> (batch, H, W, embed_dim)
+    H_trans = bottleneck_h // patch_size
+    W_trans = bottleneck_w // patch_size
+    x_trans_reshaped = layers.Reshape((H_trans, W_trans, embed_dim), name='trans_reshape')(x_trans)
     
-    u8 = layers.Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same')(c7)
-    u8 = layers.concatenate([u8, c1])
-    c8 = layers.Conv2D(64, (3, 3), padding='same')(u8)
-    c8 = layers.BatchNormalization()(c8)
-    c8 = layers.Activation('relu')(c8)
-    c8 = layers.Conv2D(64, (3, 3), padding='same')(c8)
-    c8 = layers.BatchNormalization()(c8)
-    c8 = layers.Activation('relu')(c8)
+    # Project back to original bottleneck size if needed
+    if patch_size > 1:
+        # Upsample to original bottleneck spatial size
+        x_trans_reshaped = layers.UpSampling2D(size=(patch_size, patch_size), 
+                                                interpolation='bilinear',
+                                                name='trans_upsample')(x_trans_reshaped)
     
-    # Output layer
-    outputs = layers.Conv2D(num_classes, (1, 1), activation='softmax')(c8)
+    # ========== CNN Decoder (with skip connections from encoder) ==========
+    # Decoder Stage 1: 16x16 -> 32x32
+    u5 = layers.Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same', name='dec5_upconv')(x_trans_reshaped)
+    u5 = layers.concatenate([u5, c4], name='dec5_concat')  # Skip connection from enc4
+    c5 = layers.Conv2D(256, (3, 3), padding='same', name='dec5_conv1')(u5)
+    c5 = layers.BatchNormalization(name='dec5_bn1')(c5)
+    c5 = layers.Activation('relu', name='dec5_relu1')(c5)
+    c5 = layers.Conv2D(256, (3, 3), padding='same', name='dec5_conv2')(c5)
+    c5 = layers.BatchNormalization(name='dec5_bn2')(c5)
+    c5 = layers.Activation('relu', name='dec5_relu2')(c5)
+    
+    # Decoder Stage 2: 32x32 -> 64x64
+    u6 = layers.Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same', name='dec6_upconv')(c5)
+    u6 = layers.concatenate([u6, c3], name='dec6_concat')  # Skip connection from enc3
+    c6 = layers.Conv2D(256, (3, 3), padding='same', name='dec6_conv1')(u6)
+    c6 = layers.BatchNormalization(name='dec6_bn1')(c6)
+    c6 = layers.Activation('relu', name='dec6_relu1')(c6)
+    c6 = layers.Conv2D(256, (3, 3), padding='same', name='dec6_conv2')(c6)
+    c6 = layers.BatchNormalization(name='dec6_bn2')(c6)
+    c6 = layers.Activation('relu', name='dec6_relu2')(c6)
+    
+    # Decoder Stage 3: 64x64 -> 128x128
+    u7 = layers.Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same', name='dec7_upconv')(c6)
+    u7 = layers.concatenate([u7, c2], name='dec7_concat')  # Skip connection from enc2
+    c7 = layers.Conv2D(128, (3, 3), padding='same', name='dec7_conv1')(u7)
+    c7 = layers.BatchNormalization(name='dec7_bn1')(c7)
+    c7 = layers.Activation('relu', name='dec7_relu1')(c7)
+    c7 = layers.Conv2D(128, (3, 3), padding='same', name='dec7_conv2')(c7)
+    c7 = layers.BatchNormalization(name='dec7_bn2')(c7)
+    c7 = layers.Activation('relu', name='dec7_relu2')(c7)
+    
+    # Decoder Stage 4: 128x128 -> 256x256
+    u8 = layers.Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same', name='dec8_upconv')(c7)
+    u8 = layers.concatenate([u8, c1], name='dec8_concat')  # Skip connection from enc1
+    c8 = layers.Conv2D(64, (3, 3), padding='same', name='dec8_conv1')(u8)
+    c8 = layers.BatchNormalization(name='dec8_bn1')(c8)
+    c8 = layers.Activation('relu', name='dec8_relu1')(c8)
+    c8 = layers.Conv2D(64, (3, 3), padding='same', name='dec8_conv2')(c8)
+    c8 = layers.BatchNormalization(name='dec8_bn2')(c8)
+    c8 = layers.Activation('relu', name='dec8_relu2')(c8)
+    
+    # ========== Output Layer ==========
+    # Final 1x1 convolution for class predictions
+    outputs = layers.Conv2D(num_classes, (1, 1), activation='softmax', name='output')(c8)
     
     model = models.Model(inputs=[inputs], outputs=[outputs], name="TransUNet_MIFOCAT")
     return model
