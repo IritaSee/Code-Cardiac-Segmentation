@@ -41,7 +41,7 @@ class patch_extract(Layer):
                                   strides=(1, self.patch_size_x, self.patch_size_y, 1),
                                   rates=(1, 1, 1, 1), padding='VALID',)
         patch_dim = patches.shape[-1]
-        patch_num = patches.shape[1]
+        patch_num = tf.shape(patches)[1]  # Use tf.shape for dynamic dimensions
         patches = tf.reshape(patches, (batch_size, patch_num*patch_num, patch_dim))
         return patches
 
