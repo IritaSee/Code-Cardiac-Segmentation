@@ -35,6 +35,7 @@ except ImportError:
 
 from custom_datagen import FoldAwareDataLoader
 from proposed_model import build_unet_mifocat, mifocat_loss, mean_iou, dice_score
+from transunet_model import build_transunet_mifocat, get_custom_objects
 
 
 class KFoldTrainer:
@@ -91,6 +92,7 @@ class KFoldTrainer:
         
         # Metrics storage
         self.fold_results = {}
+        self.current_model_type = None  # Track current model type for evaluation
     
     def get_model(self, model_type: str = 'unet') -> 'keras.Model':
         """
@@ -122,6 +124,20 @@ class KFoldTrainer:
             )
             
             print("[KFoldTrainer] Model compiled with MIFOCAT loss")
+            return model
+        elif model_type == 'transunet' or model_type == 'trans_unet':
+            print("[KFoldTrainer] Loading TransUNet model with MIFOCAT loss...")
+            # Build TransUNet architecture
+            model = build_transunet_mifocat(input_shape=(256, 256, 1), num_classes=4)
+            
+            # Compile with MIFOCAT loss (MSE + Focal + Categorical Cross-Entropy)
+            model.compile(
+                optimizer=Adam(learning_rate=1e-3),
+                loss=mifocat_loss(alpha=0.25, gamma=2.0, r1=1.0, r2=1.0, r3=1.0),
+                metrics=['accuracy', mean_iou, dice_score]
+            )
+            
+            print("[KFoldTrainer] TransUNet model compiled with MIFOCAT loss")
             return model
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
@@ -256,8 +272,18 @@ class KFoldTrainer:
         print(f"\n[FOLD {fold_id}] Evaluating on test set...")
         
         try:
-            # Load model
-            model = keras.models.load_model(model_path, compile=False)
+            # Load model with appropriate custom objects
+            if self.current_model_type in ['transunet', 'trans_unet']:
+                custom_objs = get_custom_objects()
+                # Also include MIFOCAT metrics
+                custom_objs.update({
+                    'mifocat_loss': mifocat_loss(alpha=0.25, gamma=2.0, r1=1.0, r2=1.0, r3=1.0),
+                    'mean_iou': mean_iou,
+                    'dice_score': dice_score
+                })
+                model = keras.models.load_model(model_path, custom_objects=custom_objs, compile=False)
+            else:
+                model = keras.models.load_model(model_path, compile=False)
             
             # Get test data
             test_patients = self.data_loader.get_fold_patients(fold_id, 'test')
@@ -314,9 +340,13 @@ class KFoldTrainer:
         print(f"# Metadata: {self.fold_metadata_path}")
         print(f"# Data dir: {self.base_data_dir}")
         print(f"# Output dir: {self.output_dir}")
+        print(f"# Model type: {model_type}")
         print(f"# Starting from fold: {start_fold}")
         print(f"# Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'#'*70}\n")
+        
+        # Store model type for later use in evaluation
+        self.current_model_type = model_type
         
         fold_results_list = []
         
